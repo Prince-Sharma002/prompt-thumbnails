@@ -1,4 +1,4 @@
 project_id = "wmatvdmtylhtkxkafltc"
 
-[functions.generate-thumbnail]
+[functions.create-thumbnail]
 verify_jwt = false
