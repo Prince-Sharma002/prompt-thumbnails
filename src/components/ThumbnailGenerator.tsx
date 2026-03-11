@@ -14,12 +14,6 @@ const STYLE_PRESETS = [
   { label: "Retro", prompt: "vintage 80s aesthetic, retro colors, VHS grain" },
 ];
 
-const ASPECT_RATIOS = [
-  { label: "16:9", width: 1280, height: 720 },
-  { label: "1:1", width: 1024, height: 1024 },
-  { label: "4:3", width: 1024, height: 768 },
-];
-
 interface GeneratedImage {
   id: string;
   prompt: string;
@@ -30,7 +24,6 @@ interface GeneratedImage {
 export default function ThumbnailGenerator() {
   const [prompt, setPrompt] = useState("");
   const [selectedStyle, setSelectedStyle] = useState<number | null>(null);
-  const [selectedRatio, setSelectedRatio] = useState(0);
   const [isGenerating, setIsGenerating] = useState(false);
   const [history, setHistory] = useState<GeneratedImage[]>([]);
 
@@ -42,50 +35,22 @@ export default function ThumbnailGenerator() {
 
     setIsGenerating(true);
     const fullPrompt = selectedStyle !== null
-      ? `${prompt}, ${STYLE_PRESETS[selectedStyle].prompt}, high quality thumbnail`
-      : `${prompt}, high quality thumbnail`;
-
-    const ratio = ASPECT_RATIOS[selectedRatio];
+      ? `${prompt}, ${STYLE_PRESETS[selectedStyle].prompt}`
+      : prompt;
 
     try {
-      // Create prediction via edge function
-      const { data: createData, error: createError } = await supabase.functions.invoke("generate-thumbnail", {
-        body: {
-          action: "create",
-          prompt: fullPrompt,
-          width: ratio.width,
-          height: ratio.height,
-        },
+      const { data, error } = await supabase.functions.invoke("generate-thumbnail", {
+        body: { prompt: fullPrompt },
       });
 
-      if (createError) throw new Error(createError.message || "Failed to start generation");
-      if (createData?.error) throw new Error(createData.error);
-
-      const predictionId = createData.id;
-      if (!predictionId) throw new Error("No prediction ID returned");
-
-      // Poll for result
-      let prediction = createData;
-      while (prediction.status !== "succeeded" && prediction.status !== "failed") {
-        await new Promise((r) => setTimeout(r, 2500));
-        const { data: pollData, error: pollError } = await supabase.functions.invoke("generate-thumbnail", {
-          body: { action: "poll", prediction_id: predictionId },
-        });
-
-        if (pollError) throw new Error(pollError.message || "Polling failed");
-        if (pollData?.error) throw new Error(pollData.error);
-        prediction = pollData;
-      }
-
-      if (prediction.status === "failed") throw new Error(prediction.error || "Generation failed");
-
-      const imageUrl = prediction.output?.[0];
-      if (!imageUrl) throw new Error("No image returned");
+      if (error) throw new Error(error.message || "Failed to generate");
+      if (data?.error) throw new Error(data.error);
+      if (!data?.imageUrl) throw new Error("No image returned");
 
       const newImage: GeneratedImage = {
-        id: predictionId,
+        id: crypto.randomUUID(),
         prompt: fullPrompt,
-        url: imageUrl,
+        url: data.imageUrl,
         timestamp: new Date(),
       };
 
@@ -105,7 +70,6 @@ export default function ThumbnailGenerator() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Background gradient orbs */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full bg-primary/10 blur-3xl" />
         <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full bg-accent/10 blur-3xl" />
@@ -137,7 +101,6 @@ export default function ThumbnailGenerator() {
           transition={{ delay: 0.15 }}
           className="glass rounded-2xl p-6 md:p-8 mb-8"
         >
-          {/* Prompt Input */}
           <div className="mb-6">
             <label className="block text-sm font-medium text-muted-foreground mb-2">
               Describe your thumbnail
@@ -151,8 +114,7 @@ export default function ThumbnailGenerator() {
             />
           </div>
 
-          {/* Style Presets */}
-          <div className="mb-6">
+          <div className="mb-8">
             <label className="block text-sm font-medium text-muted-foreground mb-3">
               Style Preset
             </label>
@@ -173,29 +135,6 @@ export default function ThumbnailGenerator() {
             </div>
           </div>
 
-          {/* Aspect Ratio */}
-          <div className="mb-8">
-            <label className="block text-sm font-medium text-muted-foreground mb-3">
-              Aspect Ratio
-            </label>
-            <div className="flex gap-3">
-              {ASPECT_RATIOS.map((ratio, i) => (
-                <button
-                  key={ratio.label}
-                  onClick={() => setSelectedRatio(i)}
-                  className={`px-5 py-2 rounded-lg text-sm font-mono font-medium transition-all ${
-                    selectedRatio === i
-                      ? "bg-accent text-accent-foreground glow-accent"
-                      : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                  }`}
-                >
-                  {ratio.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Generate Button */}
           <Button
             variant="glow"
             size="lg"
@@ -206,7 +145,7 @@ export default function ThumbnailGenerator() {
             {isGenerating ? (
               <span className="flex items-center gap-3">
                 <span className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                Generating… (this may take 30-60s)
+                Generating… (may take 10-30s)
               </span>
             ) : (
               <span className="flex items-center gap-2">
@@ -217,7 +156,7 @@ export default function ThumbnailGenerator() {
           </Button>
         </motion.div>
 
-        {/* History */}
+        {/* Generated Thumbnails */}
         {history.length > 0 && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <h2 className="text-xl font-display font-semibold mb-4 text-foreground">
@@ -234,12 +173,7 @@ export default function ThumbnailGenerator() {
                     className="glass rounded-xl overflow-hidden group"
                   >
                     <div className="relative">
-                      <img
-                        src={img.url}
-                        alt={img.prompt}
-                        className="w-full object-cover"
-                        loading="lazy"
-                      />
+                      <img src={img.url} alt={img.prompt} className="w-full object-cover" loading="lazy" />
                       <div className="absolute inset-0 bg-background/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
                         <a href={img.url} target="_blank" rel="noopener noreferrer" download>
                           <Button variant="secondary" size="icon" className="rounded-full">
@@ -266,22 +200,15 @@ export default function ThumbnailGenerator() {
           </motion.div>
         )}
 
-        {/* Empty State */}
         {history.length === 0 && !isGenerating && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.3 }}
-            className="text-center py-16"
-          >
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }} className="text-center py-16">
             <ImageIcon className="w-16 h-16 text-muted-foreground/30 mx-auto mb-4" />
             <p className="text-muted-foreground">Your generated thumbnails will appear here</p>
           </motion.div>
         )}
 
-        {/* Footer */}
         <div className="text-center mt-16 text-xs text-muted-foreground">
-          Final Year Project · AI Thumbnail Generator · Powered by Replicate
+          Final Year Project · AI Thumbnail Generator
         </div>
       </div>
     </div>

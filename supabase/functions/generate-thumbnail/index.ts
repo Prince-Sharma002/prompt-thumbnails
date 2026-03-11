@@ -3,67 +3,66 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const REPLICATE_API_URL = "https://api.replicate.com/v1/predictions";
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const REPLICATE_API_TOKEN = Deno.env.get("REPLICATE_API_TOKEN");
-  if (!REPLICATE_API_TOKEN) {
-    return new Response(JSON.stringify({ error: "REPLICATE_API_TOKEN not configured" }), {
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  if (!LOVABLE_API_KEY) {
+    return new Response(JSON.stringify({ error: "LOVABLE_API_KEY not configured" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
   try {
-    const { action, prediction_id, ...inputData } = await req.json();
+    const { prompt } = await req.json();
 
-    if (action === "poll") {
-      // Poll for prediction status
-      const res = await fetch(`${REPLICATE_API_URL}/${prediction_id}`, {
-        headers: {
-          Authorization: `Bearer ${REPLICATE_API_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      });
-      const data = await res.json();
-      return new Response(JSON.stringify(data), {
+    if (!prompt) {
+      return new Response(JSON.stringify({ error: "Prompt is required" }), {
+        status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Create prediction
-    const { prompt, width, height } = inputData;
+    console.log("Generating thumbnail with prompt:", prompt);
 
-    const res = await fetch(REPLICATE_API_URL, {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${REPLICATE_API_TOKEN}`,
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        version: "39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
-        input: {
-          prompt,
-          width: width || 1280,
-          height: height || 720,
-          num_outputs: 1,
-          guidance_scale: 7.5,
-          num_inference_steps: 25,
-        },
+        model: "google/gemini-2.5-flash-image",
+        messages: [
+          {
+            role: "user",
+            content: `Generate a high-quality YouTube thumbnail image: ${prompt}. Make it vibrant, eye-catching, and professional.`,
+          },
+        ],
+        modalities: ["image", "text"],
       }),
     });
 
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(`Replicate API error [${res.status}]: ${JSON.stringify(err)}`);
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`AI Gateway error [${response.status}]:`, errText);
+      throw new Error(`AI Gateway error [${response.status}]: ${errText}`);
     }
 
-    const data = await res.json();
-    return new Response(JSON.stringify(data), {
+    const data = await response.json();
+    const imageUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+
+    if (!imageUrl) {
+      console.error("No image in response:", JSON.stringify(data).slice(0, 500));
+      throw new Error("No image was generated");
+    }
+
+    console.log("Thumbnail generated successfully");
+
+    return new Response(JSON.stringify({ imageUrl }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error: unknown) {
