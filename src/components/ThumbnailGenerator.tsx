@@ -3,8 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, Download, Trash2, Image as ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-
-const REPLICATE_API_TOKEN = "r8_CuUGDOpB2dTOUksgTr7DjfdHo4eUL5a1HYJ6P";
+import { supabase } from "@/integrations/supabase/client";
 
 const STYLE_PRESETS = [
   { label: "Cinematic", prompt: "cinematic lighting, dramatic shadows, movie poster style" },
@@ -49,46 +48,42 @@ export default function ThumbnailGenerator() {
     const ratio = ASPECT_RATIOS[selectedRatio];
 
     try {
-      // Create prediction
-      const createRes = await fetch("https://api.replicate.com/v1/predictions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${REPLICATE_API_TOKEN}`,
-          "Content-Type": "application/json",
+      // Create prediction via edge function
+      const { data: createData, error: createError } = await supabase.functions.invoke("generate-thumbnail", {
+        body: {
+          action: "create",
+          prompt: fullPrompt,
+          width: ratio.width,
+          height: ratio.height,
         },
-        body: JSON.stringify({
-          version: "39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
-          input: {
-            prompt: fullPrompt,
-            width: ratio.width,
-            height: ratio.height,
-            num_outputs: 1,
-            guidance_scale: 7.5,
-            num_inference_steps: 25,
-          },
-        }),
       });
 
-      if (!createRes.ok) throw new Error("Failed to start generation");
+      if (createError) throw new Error(createError.message || "Failed to start generation");
+      if (createData?.error) throw new Error(createData.error);
 
-      let prediction = await createRes.json();
+      const predictionId = createData.id;
+      if (!predictionId) throw new Error("No prediction ID returned");
 
       // Poll for result
+      let prediction = createData;
       while (prediction.status !== "succeeded" && prediction.status !== "failed") {
-        await new Promise((r) => setTimeout(r, 2000));
-        const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
-          headers: { Authorization: `Bearer ${REPLICATE_API_TOKEN}` },
+        await new Promise((r) => setTimeout(r, 2500));
+        const { data: pollData, error: pollError } = await supabase.functions.invoke("generate-thumbnail", {
+          body: { action: "poll", prediction_id: predictionId },
         });
-        prediction = await pollRes.json();
+
+        if (pollError) throw new Error(pollError.message || "Polling failed");
+        if (pollData?.error) throw new Error(pollData.error);
+        prediction = pollData;
       }
 
-      if (prediction.status === "failed") throw new Error("Generation failed");
+      if (prediction.status === "failed") throw new Error(prediction.error || "Generation failed");
 
       const imageUrl = prediction.output?.[0];
       if (!imageUrl) throw new Error("No image returned");
 
       const newImage: GeneratedImage = {
-        id: prediction.id,
+        id: predictionId,
         prompt: fullPrompt,
         url: imageUrl,
         timestamp: new Date(),
@@ -97,6 +92,7 @@ export default function ThumbnailGenerator() {
       setHistory((prev) => [newImage, ...prev]);
       toast.success("Thumbnail generated!");
     } catch (err: any) {
+      console.error("Generation error:", err);
       toast.error(err.message || "Something went wrong");
     } finally {
       setIsGenerating(false);
@@ -210,7 +206,7 @@ export default function ThumbnailGenerator() {
             {isGenerating ? (
               <span className="flex items-center gap-3">
                 <span className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                Generating…
+                Generating… (this may take 30-60s)
               </span>
             ) : (
               <span className="flex items-center gap-2">
@@ -245,12 +241,7 @@ export default function ThumbnailGenerator() {
                         loading="lazy"
                       />
                       <div className="absolute inset-0 bg-background/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                        <a
-                          href={img.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          download
-                        >
+                        <a href={img.url} target="_blank" rel="noopener noreferrer" download>
                           <Button variant="secondary" size="icon" className="rounded-full">
                             <Download className="w-4 h-4" />
                           </Button>
