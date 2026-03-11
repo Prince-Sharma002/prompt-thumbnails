@@ -39,7 +39,7 @@ export default function ThumbnailGenerator() {
       : prompt;
 
     try {
-      const { data, error } = await supabase.functions.invoke("generate-thumbnail", {
+      const { data, error } = await supabase.functions.invoke("create-thumbnail", {
         body: { prompt: fullPrompt },
       });
 
